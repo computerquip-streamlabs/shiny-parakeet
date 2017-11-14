@@ -31,11 +31,24 @@ public:
 	void read() 
 	{
 		asio::async_read(
-			stream, 
+			stream,
 			asio::mutable_buffer(read_buffer, amount_buffered), 
-			[this](std::error_code error, std::size_t length) {
+			[this](asio::error_code error, std::size_t length) {
 				if (error) {
-					printf("Failed to read from pipe: %s", error.message().c_str());
+					printf("Failed to read from pipe: %s\n", error.message().c_str());
+
+					if (error.value() == ERROR_BROKEN_PIPE) {
+						printf("Client closed the handle.\n");
+						BOOL okay = DisconnectNamedPipe(stream.native_handle());
+
+						if (!okay) {
+							printf("Failed to reset pipe!\n");
+							service.stop();
+						}
+
+						start();
+					}
+
 					return;
 				}
 
@@ -112,24 +125,29 @@ int main(int argc, char *argv[])
 	/* Not used */
 	LPSECURITY_ATTRIBUTES lpSecurityAttributes = NULL;
 
-	HANDLE hServerPipe = CreateNamedPipe(
-		"\\\\.\\pipe\\bobby",
-		dwOpenMode,
-		dwPipeMode,
-		PIPE_UNLIMITED_INSTANCES,
-		dwPipeSize /* Out Buffer */, 
-		dwPipeSize /* In Buffer */,
-		dwTimeout,
-		lpSecurityAttributes
-	);
+	ipc::server::session *sessions[10];
 
-	if (hServerPipe == INVALID_HANDLE_VALUE) {
-		printf("Failed to create pipe!");
-		return 0;
+	for (int i = 0; i < 10; ++i) {
+		HANDLE hServerPipe = CreateNamedPipe(
+			"\\\\.\\pipe\\bobby",
+			dwOpenMode,
+			dwPipeMode,
+			PIPE_UNLIMITED_INSTANCES,
+			dwPipeSize /* Out Buffer */, 
+			dwPipeSize /* In Buffer */,
+			dwTimeout,
+			lpSecurityAttributes
+		);
+
+		if (hServerPipe == INVALID_HANDLE_VALUE) {
+			printf("Failed to create pipe!");
+			return 0;
+		}
+
+		sessions[i] = new ipc::server::session(ipc::g_service, hServerPipe);
+		sessions[i]->start();
 	}
 
-	ipc::server::session session(ipc::g_service, hServerPipe);
-	session.start();
 	ipc::g_service.run();
 
 	return 0;
